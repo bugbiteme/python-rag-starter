@@ -1,17 +1,17 @@
 import base64
 import chromadb
 import uuid
-from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
+from ollama_embedding_function import OllamaEmbeddingFunction
 from flask import Flask, request
 
 app = Flask(__name__)
 
 client = chromadb.HttpClient(host="chroma", port=8080)
- 
+
 # Create a collection within the vector DB.
 # This is a mandatory step.
 
-collection = client.create_collection("my_collection", 
+collection = client.create_collection("my_collection",
                                       embedding_function=OllamaEmbeddingFunction(url="http://ollama-embedding:8080/api/embeddings", model_name="nomic-embed-text"),
                                       get_or_create=True)
 

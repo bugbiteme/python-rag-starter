@@ -1,2 +1,4 @@
 flask
 chromadb-client
+jsonify
+
