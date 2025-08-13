@@ -6,8 +6,10 @@ sys.modules["sqlite3"] = sqlite3
 import base64
 import chromadb
 import uuid
+import requests  # <-- add this
+
 from ollama_embedding_function import OllamaEmbeddingFunction
-from flask import Flask, request, jsonify, Response
+from flask import Flask, request, jsonify, Response  # Response already here; keep this one
 
 app = Flask(__name__)
 
@@ -62,14 +64,12 @@ def remote_chunks():
             "remote": remote_url
         }), 502
 
-    # Try to mirror JSON exactly; fall back to raw content if not JSON.
     content_type = upstream.headers.get("Content-Type", "application/json")
     try:
-        data = upstream.json()
-        return jsonify(data), upstream.status_code
+        return jsonify(upstream.json()), upstream.status_code
     except ValueError:
-        # Not JSON; just relay bytes and content-type
         return Response(upstream.content, status=upstream.status_code, content_type=content_type)
+
 
 
 app.run(host="0.0.0.0", port=8080)
