@@ -7,7 +7,7 @@ import base64
 import chromadb
 import uuid
 from ollama_embedding_function import OllamaEmbeddingFunction
-from flask import Flask, request
+from flask import Flask, request, jsonify, Response
 
 app = Flask(__name__)
 
