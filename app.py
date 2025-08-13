@@ -164,28 +164,34 @@ def populate():
 
 @app.route("/stats", methods=["GET"])
 def stats():
-    """Quick visibility into Chroma contents."""
+    """
+    Returns a quick count of documents in the ChromaDB collection
+    and a small sample (id, preview, metadata).
+    """
     try:
-        total = collection.count()
+        total_docs = collection.count()
     except Exception as e:
         return jsonify({"error": "count failed", "details": str(e)}), 500
 
     sample = []
     try:
-        peek = collection.get(limit=3, include=["ids", "documents", "metadatas"])
-        for id_, doc, meta in zip(peek.get("ids", []), peek.get("documents", []), peek.get("metadatas", [])):
+        # In chromadb 0.5.x, valid include items are: "documents", "metadatas", "embeddings", "uris", "data"
+        res = collection.get(limit=3, include=["documents", "metadatas"])
+        ids = res.get("ids", [])
+        docs = res.get("documents", [])
+        metas = res.get("metadatas", [])
+        for id_, doc, meta in zip(ids, docs, metas):
             sample.append({
                 "id": id_,
                 "doc_preview": (doc[:160] + "…") if doc and len(doc) > 160 else doc,
                 "metadata": meta or {}
             })
     except Exception as e:
-        sample = [{"warning": f"sample failed: {e}"}]
+        sample = [{"warning": f"failed to retrieve sample: {e}"}]
 
     return jsonify({
         "collection": getattr(collection, "name", "my_collection"),
-        "total_docs": total,
+        "total_docs": total_docs,
         "sample": sample
     }), 200
-
 app.run(host="0.0.0.0", port=8080)
