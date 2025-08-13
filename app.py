@@ -53,7 +53,7 @@ def remote_chunks():
     Calls the chunks endpoint on another service (http://turtlecomms:8080/chunks)
     and mirrors its response (status code + JSON). Any query params are forwarded.
     """
-    remote_url = "http://instructions:8080/chunks"
+    remote_url = "http://turtlecomms:8080/chunks"
 
     try:
         upstream = requests.get(remote_url, params=request.args, timeout=10)
