@@ -162,6 +162,30 @@ def populate():
         "ids_sample": ids[:5]
     }), 200
 
+@app.route("/stats", methods=["GET"])
+def stats():
+    """Quick visibility into Chroma contents."""
+    try:
+        total = collection.count()
+    except Exception as e:
+        return jsonify({"error": "count failed", "details": str(e)}), 500
 
+    sample = []
+    try:
+        peek = collection.get(limit=3, include=["ids", "documents", "metadatas"])
+        for id_, doc, meta in zip(peek.get("ids", []), peek.get("documents", []), peek.get("metadatas", [])):
+            sample.append({
+                "id": id_,
+                "doc_preview": (doc[:160] + "…") if doc and len(doc) > 160 else doc,
+                "metadata": meta or {}
+            })
+    except Exception as e:
+        sample = [{"warning": f"sample failed: {e}"}]
+
+    return jsonify({
+        "collection": getattr(collection, "name", "my_collection"),
+        "total_docs": total,
+        "sample": sample
+    }), 200
 
 app.run(host="0.0.0.0", port=8080)
