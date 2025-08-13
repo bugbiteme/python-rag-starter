@@ -41,9 +41,35 @@ collection.add(documents=[text], ids=[str(uuid.uuid4())])
 print(collection.query(query_texts=["Why can nobody hear you scream in space?"],
                        n_results=1))
 
-@app.route('/')
-def hello():
-    return "Hello. This is a sample application."
+@app.route("/", methods=["GET", "POST"])
+def root():
+    # GET stays as a simple health/greeting
+    if request.method == "GET":
+        return "Hello. This is a sample application."
+
+    # POST: accept plain text body and query Chroma
+    text = request.get_data(as_text=True) or ""
+    text = text.strip()
+    if not text:
+        return jsonify({"error": "empty request body; expected plain text"}), 400
+
+    # optional: allow n via query param, default 3
+    try:
+        n = int(request.args.get("n", "3"))
+        if n <= 0:
+            raise ValueError
+    except ValueError:
+        return jsonify({"error": "n must be a positive integer"}), 400
+
+    try:
+        # include only valid keys for chromadb 0.5.x; ids/distances come automatically
+        res = collection.query(query_texts=[text], n_results=n, include=["documents", "metadatas"])
+    except Exception as e:
+        return jsonify({"error": "query failed", "details": str(e)}), 500
+
+    # Mirror the vector DB's JSON structure (what "ship" expects)
+    return jsonify(res), 200
+
 
 from flask import Response  # add this import
 
