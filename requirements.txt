@@ -1,4 +1,4 @@
 flask
-chromadb==0.5.5
 jsonify
-
+chromadb==0.5.5
+pysqlite3-binary==0.5.2
