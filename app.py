@@ -70,6 +70,60 @@ def remote_chunks():
     except ValueError:
         return Response(upstream.content, status=upstream.status_code, content_type=content_type)
 
+@app.route("/populate", methods=["GET"])
+def populate():
+    """
+    Fetches chunks from /remote-chunks and stores them in ChromaDB.
+    Optional query params (?size=...&url=...) are passed through.
+    """
+    remote_proxy_url = (request.host_url.rstrip("/") + "/remote-chunks")
+    forward_params = {}
+    if "url" in request.args:
+        forward_params["url"] = request.args["url"]
+    if "size" in request.args:
+        forward_params["size"] = request.args["size"]
+
+    try:
+        r = requests.get(remote_proxy_url, params=forward_params, timeout=20)
+        r.raise_for_status()
+        payload = r.json()
+    except requests.RequestException as e:
+        return jsonify({"error": "failed to call remote-chunks", "details": str(e)}), 502
+    except ValueError:
+        return jsonify({"error": "remote-chunks did not return JSON"}), 502
+
+    chunks = payload.get("chunks", [])
+    source_url = payload.get("url", forward_params.get("url", "unknown"))
+
+    documents, ids, metadatas = [], [], []
+    for ch in chunks:
+        paragraphs = ch.get("paragraphs", [])
+        if not paragraphs:
+            continue
+        doc = "\n\n".join(paragraphs)
+        stable_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{source_url}::chunk::{ch.get('index')}"))
+        documents.append(doc)
+        ids.append(stable_id)
+        metadatas.append({
+            "source_url": source_url,
+            "chunk_index": ch.get("index"),
+            "start_paragraph": ch.get("start_paragraph"),
+            "end_paragraph": ch.get("end_paragraph"),
+            "size": ch.get("size")
+        })
+
+    try:
+        collection.add(documents=documents, ids=ids, metadatas=metadatas)
+    except Exception as e:
+        return jsonify({"error": "failed to add to Chroma", "details": str(e)}), 500
+
+    return jsonify({
+        "added": len(documents),
+        "chunks_count": payload.get("chunks_count"),
+        "source_url": source_url,
+        "ids_sample": ids[:5]
+    }), 200
+
 
 
 app.run(host="0.0.0.0", port=8080)
