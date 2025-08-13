@@ -43,4 +43,33 @@ print(collection.query(query_texts=["Why can nobody hear you scream in space?"],
 def hello():
     return "Hello. This is a sample application."
 
+from flask import Response  # add this import
+
+@app.route("/remote-chunks", methods=["GET"])
+def remote_chunks():
+    """
+    Calls the chunks endpoint on another service (http://instructions:8080/chunks)
+    and mirrors its response (status code + JSON). Any query params are forwarded.
+    """
+    remote_url = "http://instructions:8080/chunks"
+
+    try:
+        upstream = requests.get(remote_url, params=request.args, timeout=10)
+    except requests.RequestException as e:
+        return jsonify({
+            "error": "failed to reach remote chunks service",
+            "details": str(e),
+            "remote": remote_url
+        }), 502
+
+    # Try to mirror JSON exactly; fall back to raw content if not JSON.
+    content_type = upstream.headers.get("Content-Type", "application/json")
+    try:
+        data = upstream.json()
+        return jsonify(data), upstream.status_code
+    except ValueError:
+        # Not JSON; just relay bytes and content-type
+        return Response(upstream.content, status=upstream.status_code, content_type=content_type)
+
+
 app.run(host="0.0.0.0", port=8080)
