@@ -70,57 +70,95 @@ def remote_chunks():
     except ValueError:
         return Response(upstream.content, status=upstream.status_code, content_type=content_type)
 
-@app.route("/populate", methods=["GET"])
+@app.route("/populate", methods=["GET", "POST"])
 def populate():
     """
-    Fetches chunks from /remote-chunks and stores them in ChromaDB.
-    Optional query params (?size=...&url=...) are passed through.
-    """
-    remote_proxy_url = (request.host_url.rstrip("/") + "/remote-chunks")
-    forward_params = {}
-    if "url" in request.args:
-        forward_params["url"] = request.args["url"]
-    if "size" in request.args:
-        forward_params["size"] = request.args["size"]
+    Populate ChromaDB from internal chunks service.
+    Sources chunks from: http://turtlecomms:8080/chunks
+    Accepts optional ?size=&url= (also allowed in POST JSON).
 
+    Idempotent: deterministic UUIDv5 per (source_url, chunk_index).
+    Uses collection.upsert() if available; otherwise add() with update fallback.
+    """
+    # Collect optional params (query takes precedence over JSON)
+    url_arg = request.args.get("url")
+    size_arg = request.args.get("size")
+    body = request.get_json(silent=True) or {} if request.method == "POST" else {}
+
+    params = {}
+    if url_arg or body.get("url"):
+        params["url"] = url_arg or body.get("url")
+    if size_arg or body.get("size"):
+        params["size"] = str(size_arg or body.get("size"))
+
+    # Call internal service directly
+    remote_url = "http://turtlecomms:8080/chunks"
     try:
-        r = requests.get(remote_proxy_url, params=forward_params, timeout=20)
+        r = requests.get(remote_url, params=params, timeout=30)
         r.raise_for_status()
         payload = r.json()
+    except requests.Timeout as e:
+        return jsonify({"error": "timeout calling turtlecomms", "details": str(e)}), 504
     except requests.RequestException as e:
-        return jsonify({"error": "failed to call remote-chunks", "details": str(e)}), 502
+        return jsonify({"error": "failed to call turtlecomms", "details": str(e)}), 502
     except ValueError:
-        return jsonify({"error": "remote-chunks did not return JSON"}), 502
+        return jsonify({"error": "turtlecomms did not return JSON"}), 502
 
     chunks = payload.get("chunks", [])
-    source_url = payload.get("url", forward_params.get("url", "unknown"))
+    source_url = payload.get("url") or params.get("url") or "unknown"
 
+    if not chunks:
+        return jsonify({
+            "added": 0,
+            "chunks_count": payload.get("chunks_count", 0),
+            "source_url": source_url,
+            "message": "No chunks to add."
+        }), 200
+
+    # Prepare docs
     documents, ids, metadatas = [], [], []
     for ch in chunks:
-        paragraphs = ch.get("paragraphs", [])
+        idx = ch.get("index")
+        paragraphs = ch.get("paragraphs") or []
         if not paragraphs:
             continue
+
         doc = "\n\n".join(paragraphs)
-        stable_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{source_url}::chunk::{ch.get('index')}"))
+        stable_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{source_url}::chunk::{idx}"))
+
         documents.append(doc)
         ids.append(stable_id)
         metadatas.append({
             "source_url": source_url,
-            "chunk_index": ch.get("index"),
+            "chunk_index": idx,
             "start_paragraph": ch.get("start_paragraph"),
             "end_paragraph": ch.get("end_paragraph"),
-            "size": ch.get("size")
+            "size": ch.get("size"),
+            "chunk_size": payload.get("chunk_size"),
+            "paragraph_count_total": payload.get("paragraph_count"),
         })
 
+    # Upsert/add into Chroma
     try:
-        collection.add(documents=documents, ids=ids, metadatas=metadatas)
+        if hasattr(collection, "upsert"):
+            collection.upsert(documents=documents, ids=ids, metadatas=metadatas)
+        else:
+            try:
+                collection.add(documents=documents, ids=ids, metadatas=metadatas)
+            except Exception:
+                # Fallback: attempt update for already-present IDs
+                if hasattr(collection, "update"):
+                    collection.update(ids=ids, documents=documents, metadatas=metadatas)
+                else:
+                    raise
     except Exception as e:
-        return jsonify({"error": "failed to add to Chroma", "details": str(e)}), 500
+        return jsonify({"error": "failed to write to Chroma", "details": str(e)}), 500
 
     return jsonify({
         "added": len(documents),
         "chunks_count": payload.get("chunks_count"),
         "source_url": source_url,
+        "collection": getattr(collection, "name", "my_collection"),
         "ids_sample": ids[:5]
     }), 200
 
